@@ -1,0 +1,18 @@
+# dsh-model-groups bundle patch
+#
+# 挂载本插件。
+#
+# 重要：本插件**不禁用任何内置行**。第一版曾禁用 ui-model-selection 以抢占
+# composer 的 single slot，结果连带抽掉了它提供的 modelDirectories 服务，
+# 导致 web boot 失败：
+#
+#   dsh-model-groups: pending (waiting for service: modelDirectories)
+#   Error: web boot: 1 entry did not activate
+#
+# 现在改为只注册一个新命令，与内置选择器共存。
+#
+# 用 `insert` 而不是 id 定向覆盖：本插件是一个新行，不是对既有行的改写。
+
+- insert:
+    - id: model-groups
+      name: 'dsh-model-groups'
