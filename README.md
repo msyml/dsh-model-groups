@@ -342,11 +342,81 @@ Invoke-WebRequest http://127.0.0.1:19387/model-groups/pricing
 
 ## 安装
 
+`lib/` 已随仓库提供构建产物，**装到别的机器不需要构建**，只要有 Node ≥ 20。
+
+### 方式 A：从 GitHub 直接装（推荐，跨机器迁移用这个）
+
+```powershell
+# 1. 克隆到 profile 的 vendor 目录
+$profile = "$env:USERPROFILE\.dsh\profiles\desktop"
+git clone https://github.com/msyml/dsh-model-groups.git "$profile\vendor\dsh-model-groups"
+
+# 2. 在 profile 的 package.json 里登记两处（脚本见下，或手工改）
+#    dependencies:        "dsh-model-groups": "file:./vendor/dsh-model-groups"
+#    dsh.profile.bundles: "dsh-model-groups"
+
+# 3. 安装并让 DSH 把包放进 node_modules
+cd $profile
+pnpm install
+```
+
+手工改 `package.json` 时**两处都要加**：
+
+```jsonc
+{
+  "dependencies": {
+    "dsh-model-groups": "file:./vendor/dsh-model-groups"
+  },
+  "dsh": {
+    "profile": {
+      "bundles": [
+        // ...原有项
+        "dsh-model-groups"
+      ]
+    }
+  }
+}
+```
+
+`pnpm install` 之后 `node_modules/dsh-model-groups` 会出现（`nodeLinker: hoisted`
+下是实体目录拷贝，不是符号链接）。然后**完全退出 DSH 再启动**。
+
+### 方式 B：手工放包
+
 1. 把包放到 `$DSH_HOME/profiles/<profile>/node_modules/dsh-model-groups/`
 2. 在 profile 的 `package.json` 里登记 `dependencies` 与 `dsh.profile.bundles`
 3. 重启 DSH
 
-**不要**在 `cordis.patch.yml` 里禁用任何行。
+### 三种方式都要注意
+
+**不要**在 `cordis.patch.yml` 里禁用任何行。包内自带的 `cordis.patch.yml` 会被
+DSH 当作 profile bundle 层自动应用，它只做一件事：`insert` 一条 `id: model-groups`
+的插件行。**profile 自己的 `cordis.patch.yml` 不需要改**。
+
+### 迁移到另一台机器时的差异点
+
+| 项目 | 说明 |
+|---|---|
+| `lib/` 构建产物 | 已入库，无需在目标机构建 |
+| `pricing-cache.json` | **不入库**。目标机首次启动时按它自己的转发端点自动重建 |
+| 本地转发端点 | 宿主半边自动从 settings 里找 `baseURL` 指向回环地址的 provider。找不到就退化为只用 OpenRouter（有价格分数、没有倍率） |
+| `modalities-cache.json` | 仅 `scripts/sync-modalities.mjs --probe` 用，运行时不读 |
+| 插件自身的 `package.json` | `dependencies` 为空，`peerDependencies` 由 DSH 运行时提供，无需安装 |
+
+### 装完怎么验证
+
+```powershell
+# 1. 宿主路由是否注册（端口换成你的 GUI 端口）
+Invoke-WebRequest http://127.0.0.1:64288/model-groups/pricing -UseBasicParsing
+# 返回 JSON 且 available:true = 宿主半边活着；404 = 宿主没挂上
+```
+
+2. 在对话输入框敲 `/models`（折叠态）和 `/models-all`（展开态）
+3. 命令没出现时按顺序查：
+   - 启动日志里搜 `dsh-model-groups`，出现 `pending (waiting for service: ...)`
+     说明内置 `ui-model-selection` 缺失（它提供 `modelDirectories` 服务）
+   - `package.json` 的 `dependencies` 和 `dsh.profile.bundles` **两处**都要有它
+   - 客户端半边打包在渲染进程里，必须**完全退出** DSH 再启动，热重载不一定覆盖
 
 ## 卸载
 
