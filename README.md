@@ -344,23 +344,42 @@ Invoke-WebRequest http://127.0.0.1:19387/model-groups/pricing
 
 `lib/` 已随仓库提供构建产物，**装到别的机器不需要构建**，只要有 Node ≥ 20。
 
-### 方式 A：从 GitHub 直接装（推荐，跨机器迁移用这个）
+### 方式 A：一键脚本（推荐，跨机器迁移用这个）
+
+```powershell
+# 下载仓库后，在仓库目录里执行
+powershell.exe -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+脚本会依次完成：克隆到 `vendor/` → 登记 `package.json` 两处 → `pnpm install` → 自检。
+改动前自动备份 `package.json`，**重复执行是幂等的**（无改动时不写盘、不堆备份）。
+
+可选参数：
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `-Profile` | `desktop` | profile 名。DSH Desktop 用的就是它 |
+| `-DshHome` | `$env:USERPROFILE\.dsh` | DSH 家目录 |
+| `-Repo` | 本仓库地址 | 换 fork 时用 |
+| `-Ref` | `main` | 分支或 tag |
+| `-SkipInstall` | 关 | 只放文件与改配置，不跑 `pnpm install` |
+
+### 方式 B：手工三步
 
 ```powershell
 # 1. 克隆到 profile 的 vendor 目录
 $profile = "$env:USERPROFILE\.dsh\profiles\desktop"
 git clone https://github.com/msyml/dsh-model-groups.git "$profile\vendor\dsh-model-groups"
 
-# 2. 在 profile 的 package.json 里登记两处（脚本见下，或手工改）
-#    dependencies:        "dsh-model-groups": "file:./vendor/dsh-model-groups"
-#    dsh.profile.bundles: "dsh-model-groups"
+# 2. 登记 package.json 两处（用仓库自带的 Node 脚本，见下方「为什么不用手改」）
+node "$profile\vendor\dsh-model-groups\scripts\register.mjs" $profile
 
-# 3. 安装并让 DSH 把包放进 node_modules
+# 3. 装进 node_modules
 cd $profile
 pnpm install
 ```
 
-手工改 `package.json` 时**两处都要加**：
+也可以完全手工改 `package.json`，**两处都要加**：
 
 ```jsonc
 {
@@ -381,13 +400,30 @@ pnpm install
 `pnpm install` 之后 `node_modules/dsh-model-groups` 会出现（`nodeLinker: hoisted`
 下是实体目录拷贝，不是符号链接）。然后**完全退出 DSH 再启动**。
 
-### 方式 B：手工放包
+### 为什么不用 PowerShell 手改 package.json
+
+两个实测踩到的坑：
+
+1. **`Set-Content -Encoding UTF8` 在 Windows PowerShell 5.1 下写 BOM。**
+   pnpm / Volta 解析带 BOM 的 `package.json` 直接报
+   `Could not parse project manifest`，安装失败。DSH 自己的 `package.json` 是无 BOM 的。
+2. **`ConvertTo-Json` 会重排整个文件**（2 空格缩进变 4 空格），
+   制造与本次改动无关的巨大 diff。
+
+所以仓库提供 `scripts/register.mjs`：按二进制读、探测原缩进与换行、做最小改写、
+显式不带 BOM 写回；原文件带 BOM 时顺手去掉。它也可以单独用来检查现状：
+
+```powershell
+node scripts/register.mjs "$env:USERPROFILE\.dsh\profiles\desktop" --check
+```
+
+### 方式 C：手工放包
 
 1. 把包放到 `$DSH_HOME/profiles/<profile>/node_modules/dsh-model-groups/`
 2. 在 profile 的 `package.json` 里登记 `dependencies` 与 `dsh.profile.bundles`
 3. 重启 DSH
 
-### 三种方式都要注意
+### 所有方式都要注意
 
 **不要**在 `cordis.patch.yml` 里禁用任何行。包内自带的 `cordis.patch.yml` 会被
 DSH 当作 profile bundle 层自动应用，它只做一件事：`insert` 一条 `id: model-groups`
@@ -398,10 +434,11 @@ DSH 当作 profile bundle 层自动应用，它只做一件事：`insert` 一条
 | 项目 | 说明 |
 |---|---|
 | `lib/` 构建产物 | 已入库，无需在目标机构建 |
-| `pricing-cache.json` | **不入库**。目标机首次启动时按它自己的转发端点自动重建 |
+| `pricing-cache.json` | **不入库**。目标机首次启动时按它自己的转发端点自动重建；缺失时 `readCache` 返回 `index: null`，插件退化为「无倍率」而不是崩溃 |
 | 本地转发端点 | 宿主半边自动从 settings 里找 `baseURL` 指向回环地址的 provider。找不到就退化为只用 OpenRouter（有价格分数、没有倍率） |
 | `modalities-cache.json` | 仅 `scripts/sync-modalities.mjs --probe` 用，运行时不读 |
 | 插件自身的 `package.json` | `dependencies` 为空，`peerDependencies` 由 DSH 运行时提供，无需安装 |
+| pnpm | 目标机没有 pnpm 也能装：脚本会优先用 DSH 自带的那套（`resources\runtime\primary-runtime\dependencies\` 下的 node + pnpm） |
 
 ### 装完怎么验证
 
